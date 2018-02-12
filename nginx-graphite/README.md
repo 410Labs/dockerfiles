@@ -9,5 +9,5 @@ This is simple example of how to configure nginx to proxy to graphite-web.
 To use it, `graphite-web` must be available at `graphite`.  Use docker
 networking DNS with services, or `--add-host`, or `--link` to accomplish this.
 
-If you want e.g. HTTP Basic auth to prevent unauthenticated access to graphite,
+If you want e.g. HTTP Basic Auth to prevent unauthenticated access to graphite,
 you can easily add that to the config file.
