@@ -10,9 +10,12 @@ Similar to the official graphite image, but:
  * TODO: rebase on a non-phusion base image...
 
 ### Running
+
 ```
 docker volume create graphite
-docker run --name graphite -v graphite:/opt/graphite/storage 410labs/graphite
+docker run --name graphite     -v graphite:/opt/graphite/storage 410labs/graphite
+docker run --name carbon-cache -v graphite:/opt/graphite/storage 410labs/carbon-cache
+docker run --name nginx-graphite --link graphite 410labs/nginx-graphite
 ```
 
 You will want to also run an nginx proxy (see [410labs/nginx-graphite]) to use
