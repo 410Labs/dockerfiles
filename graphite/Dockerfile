@@ -68,5 +68,5 @@ VOLUME ["/opt/graphite/storage", "/var/log"]
 WORKDIR /opt/graphite
 CMD gunicorn wsgi --workers=4 --bind=0.0.0.0:8080 --preload \
   --log-file=- --access-logfile=- \
-  --limit-request-line 8190 \
+  --limit-request-line 0 \
   --pythonpath=/opt/graphite/webapp/graphite
