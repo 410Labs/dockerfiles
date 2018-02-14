@@ -8,15 +8,15 @@ Compared to the official statsd Dockerfile:
 
 ### Running
 
-If you are happy with the standard statsd configuration, and graphite/carbon is
-available on a host named "graphite" (e.g. using `--add-host` or `--link` or
+If you are happy with the standard statsd configuration, and carbon-cache is
+available on a host named "carbon-cache" (e.g. using `--add-host` or `--link` or
 docker's embedded DNS to match service names), you can just run it without much
 additional configuration.
 
 Standalone container:
-`docker run -d --name statsd --add-host graphite:10.0.0.123 410Labs/statsd:0.8.0`
+`docker run -d --name statsd --add-host carbon-cache:10.0.0.123 410Labs/statsd:0.8.0`
 
-In a swarm, which is running a 'graphite' service:
+In a swarm, which is running a 'carbon-cache' service:
 `docker service create --name statsd 410Labs/statsd:0.8.0`
 
 #### Custom config file

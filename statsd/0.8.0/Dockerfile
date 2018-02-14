@@ -22,7 +22,7 @@ RUN set -ex; \
     rm -f ${STATSD_FILENAME}; \
     mkdir /etc/statsd; \
     cp /usr/local/statsd/exampleConfig.js /etc/statsd/config.js; \
-    sed -i 's/graphite.example.com/graphite/' /etc/statsd/config.js; \
+    sed -i 's/graphite.example.com/carbon-cache/' /etc/statsd/config.js; \
     chown -R statsd:statsd /etc/statsd
 
 EXPOSE 8125
