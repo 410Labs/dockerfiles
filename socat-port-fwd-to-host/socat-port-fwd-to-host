@@ -1,0 +1,10 @@
+#!/bin/sh
+set -eu
+
+port=${1:-${SOCAT_TUNNEL_PORT}}
+host=$(ip route | awk '/^default via/ { print $3 }')
+echo "Forwarding port $port to $host"
+
+exec socat \
+  "TCP4-LISTEN:$port,fork,reuseaddr,su=nobody" \
+  "TCP4:$host:$port"
