@@ -1,0 +1,7 @@
+#!/bin/sh
+
+if [ -n "${EXTERNAL_LABELS:-}" ]; then
+  exec /usr/bin/promtail -client.external-labels="$EXTERNAL_LABELS" "$@"
+else
+  exec /usr/bin/promtail "$@"
+fi
