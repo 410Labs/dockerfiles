@@ -1,4 +1,4 @@
-module github.com/410Labs/update-apex-ips
+module github.com/410Labs/dockerfiles/update-apex-ips
 
 go 1.26.0
 
