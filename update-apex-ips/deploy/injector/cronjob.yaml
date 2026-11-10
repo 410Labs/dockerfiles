@@ -1,0 +1,81 @@
+# Runs update-apex-ips every 15 minutes with short-lived AWS credentials from OpenBao/Vault.
+# The agent injector's init container logs in with the pod's service account, reads
+# aws/creds/update-apex-ips (an assumed_role credential), and writes a shared-credentials file.
+# One container per name (the tool handles one name per run; containers run side by side).
+# Replace the namespace, image, and name. See README "Running in a pod: agent injector".
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: update-apex-ips
+  namespace: NAMESPACE
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: update-apex-ips
+  namespace: NAMESPACE
+spec:
+  schedule: "*/15 * * * *"
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 1
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      backoffLimit: 0
+      template:
+        metadata:
+          annotations:
+            vault.hashicorp.com/agent-inject: "true"
+            # Init container only: no sidecar, so the Job can finish.
+            vault.hashicorp.com/agent-pre-populate-only: "true"
+            vault.hashicorp.com/role: update-apex-ips
+            vault.hashicorp.com/agent-inject-secret-aws-credentials: aws/creds/update-apex-ips
+            vault.hashicorp.com/agent-inject-template-aws-credentials: |
+              {{- with secret "aws/creds/update-apex-ips" -}}
+              [default]
+              aws_access_key_id = {{ .Data.access_key }}
+              aws_secret_access_key = {{ .Data.secret_key }}
+              aws_session_token = {{ .Data.security_token }}
+              {{- end }}
+        spec:
+          serviceAccountName: update-apex-ips
+          restartPolicy: Never
+          containers:
+            - name: apex-example-com
+              image: 410labs/update-apex-ips:TAG
+              args:
+                - -name=www.example.com
+                # Plan only until you have watched a few runs: drift then exits 2 and the Job fails.
+                # - -apply
+              env:
+                - name: AWS_SHARED_CREDENTIALS_FILE
+                  value: /vault/secrets/aws-credentials
+                - name: AWS_REGION
+                  value: us-east-1
+              securityContext:
+                allowPrivilegeEscalation: false
+                readOnlyRootFilesystem: true
+                runAsNonRoot: true
+                capabilities: {drop: [ALL]}
+              resources:
+                requests: {cpu: 10m, memory: 32Mi}
+                limits: {memory: 128Mi}
+            - name: apex-example-org
+              image: 410labs/update-apex-ips:TAG
+              args:
+                - -name=www.example.org
+                # Plan only until you have watched a few runs: drift then exits 2 and the Job fails.
+                # - -apply
+              env:
+                - name: AWS_SHARED_CREDENTIALS_FILE
+                  value: /vault/secrets/aws-credentials
+                - name: AWS_REGION
+                  value: us-east-1
+              securityContext:
+                allowPrivilegeEscalation: false
+                readOnlyRootFilesystem: true
+                runAsNonRoot: true
+                capabilities: {drop: [ALL]}
+              resources:
+                requests: {cpu: 10m, memory: 32Mi}
+                limits: {memory: 128Mi}

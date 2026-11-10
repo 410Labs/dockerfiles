@@ -1,0 +1,5 @@
+# Only go.mod, go.sum and the Go sources are needed to build; keep the rest out of the context.
+*
+!go.mod
+!go.sum
+!*.go

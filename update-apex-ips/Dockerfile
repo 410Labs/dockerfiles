@@ -1,14 +1,13 @@
 # update-apex-ips: keeps a zone apex A record in step with a subdomain's IPs (Route53).
-# Source: https://github.com/410Labs/update-apex-ips (MIT). Published as 410labs/update-apex-ips by
-# .github/workflows/publish.yml; see ../README.md for how images here are built and published.
+# Published as 410labs/update-apex-ips by .github/workflows/publish.yml; see README.md.
 #
-# The binary is the tagged module version (TAG, passed as the VERSION build argument), fetched
-# through the Go module proxy and checked against the checksum database by `go install`, then
-# cross-compiled for the target. The build stage always runs on the build host, so the arm64 image
-# builds without emulation.
+# Built from the source in this directory. The build stage fails unless the code is gofmt-clean and
+# passes `go vet` and `go test`, so a published image has been tested. Dependencies are checked
+# against go.sum. The binary reports VERSION (the contents of ./TAG) from `-version`. The build
+# stage runs on the build host and cross-compiles, so the arm64 image needs no emulation.
 #
-# To bump: tag a new release in the update-apex-ips repository, put that tag in ./TAG, and merge.
-# The base images are pinned by digest; to refresh them:
+# To bump: change the code and ./TAG together in one pull request. The base images are pinned by
+# digest; to refresh them:
 #   docker buildx imagetools inspect golang:1.26
 #   docker buildx imagetools inspect gcr.io/distroless/static:nonroot
 
@@ -20,12 +19,18 @@ FROM --platform=$BUILDPLATFORM ${GO_IMAGE} AS build
 ARG VERSION
 ARG TARGETOS
 ARG TARGETARCH
-ENV CGO_ENABLED=0
-# go install puts a cross-compiled binary in /go/bin/<os>_<arch>/, a native one in /go/bin/.
-RUN test -n "$VERSION" \
- && GOOS=$TARGETOS GOARCH=$TARGETARCH go install -trimpath "github.com/410Labs/update-apex-ips@$VERSION" \
- && mkdir /out \
- && cp "$(find /go/bin -type f -name update-apex-ips)" /out/update-apex-ips
+WORKDIR /src
+COPY go.mod go.sum ./
+RUN go mod download
+COPY *.go ./
+RUN set -eu; \
+    [ -n "${VERSION:-}" ] || { echo "the VERSION build argument is required" >&2; exit 1; }; \
+    unformatted=$(gofmt -l .); \
+    [ -z "$unformatted" ] || { echo "gofmt needed on: $unformatted" >&2; exit 1; }; \
+    go vet ./...; \
+    go test ./...; \
+    CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH \
+      go build -trimpath -ldflags "-X main.buildVersion=$VERSION" -o /out/update-apex-ips .
 
 FROM ${RUNTIME_IMAGE}
 COPY --from=build /out/update-apex-ips /update-apex-ips
