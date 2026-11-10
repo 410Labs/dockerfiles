@@ -1,0 +1,22 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "AssumeOnlyTheApexRole",
+      "Effect": "Allow",
+      "Action": "sts:AssumeRole",
+      "Resource": "arn:aws:iam::ACCOUNT_ID:role/update-apex-ips"
+    },
+    {
+      "Sid": "RotateOwnKey",
+      "Effect": "Allow",
+      "Action": [
+        "iam:GetUser",
+        "iam:ListAccessKeys",
+        "iam:CreateAccessKey",
+        "iam:DeleteAccessKey"
+      ],
+      "Resource": "arn:aws:iam::ACCOUNT_ID:user/ENGINE_USER"
+    }
+  ]
+}

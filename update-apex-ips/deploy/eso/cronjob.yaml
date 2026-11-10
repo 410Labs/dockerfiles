@@ -1,0 +1,72 @@
+# Runs update-apex-ips every 15 minutes using the Secret rendered by credentials.yaml.
+# One container per name: the tool handles one name per run, and the containers run side by side,
+# so a failure for one name does not stop the other. Add or remove containers to match your names.
+# Replace NAMESPACE, the image tag (pin a digest for production), and -name.
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: update-apex-ips
+  namespace: NAMESPACE
+spec:
+  schedule: "*/15 * * * *"
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 1
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      backoffLimit: 0
+      template:
+        spec:
+          restartPolicy: Never
+          automountServiceAccountToken: false # the job never talks to the Kubernetes API
+          containers:
+            - name: apex-example-com
+              image: 410labs/update-apex-ips:TAG
+              args:
+                - -name=www.example.com
+                # Plan only until you have watched a few runs: drift then exits 2 and the Job fails.
+                # - -apply
+              env:
+                - name: AWS_SHARED_CREDENTIALS_FILE
+                  value: /aws/credentials
+                - name: AWS_REGION
+                  value: us-east-1
+              volumeMounts:
+                - name: aws
+                  mountPath: /aws
+                  readOnly: true
+              securityContext:
+                allowPrivilegeEscalation: false
+                readOnlyRootFilesystem: true
+                runAsNonRoot: true
+                capabilities: {drop: [ALL]}
+              resources:
+                requests: {cpu: 10m, memory: 32Mi}
+                limits: {memory: 128Mi}
+            - name: apex-example-org
+              image: 410labs/update-apex-ips:TAG
+              args:
+                - -name=www.example.org
+                # Plan only until you have watched a few runs: drift then exits 2 and the Job fails.
+                # - -apply
+              env:
+                - name: AWS_SHARED_CREDENTIALS_FILE
+                  value: /aws/credentials
+                - name: AWS_REGION
+                  value: us-east-1
+              volumeMounts:
+                - name: aws
+                  mountPath: /aws
+                  readOnly: true
+              securityContext:
+                allowPrivilegeEscalation: false
+                readOnlyRootFilesystem: true
+                runAsNonRoot: true
+                capabilities: {drop: [ALL]}
+              resources:
+                requests: {cpu: 10m, memory: 32Mi}
+                limits: {memory: 128Mi}
+          volumes:
+            - name: aws
+              secret:
+                secretName: update-apex-ips-aws
