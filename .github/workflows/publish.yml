@@ -1,0 +1,234 @@
+# Builds, smoke-tests, and publishes the images in this repository that opt in to CI, to Docker
+# Hub as 410labs/<directory>. See README.md ("Images published by CI").
+#
+# An image opts in by having a TAG file (one line: the tag to publish) and a smoke-test.sh next
+# to its Dockerfile; PLATFORMS (optional) lists the platforms to publish, default linux/amd64.
+# Directories without a TAG file are never touched, so the images that were pushed by hand years
+# ago stay as they are.
+#
+# - Pull requests, other branches, and manual runs off master build and smoke-test only.
+# - A run on master publishes, and only from the `publish` job: the Docker Hub credential lives
+#   in the `publish` environment (deployment branches: master), not in the repository.
+# - A tag is never overwritten. If 410labs/<name>:<TAG> already exists, the run warns and skips;
+#   bump TAG to publish new content. If the registry check itself fails, the run stops.
+# - `latest` is not published: consumers pin <tag>@<digest>, printed in the run summary.
+# - After a push, the smoke test runs again on the image as published, by digest.
+#
+# Settings this relies on (repository admin): environment `publish` restricted to master with
+# variable DOCKER_USERNAME and secret DOCKER_PASSWORD (a token limited to the 410labs repositories
+# published from here); a ruleset on master requiring pull requests; fork pull requests need
+# approval before any workflow runs. Never add a pull_request_target trigger.
+name: publish
+
+on:
+  push:
+    branches: [master]
+    paths:
+      - '*/**'
+      - '.github/workflows/publish.yml'
+  pull_request:
+    paths:
+      - '*/**'
+      - '.github/workflows/publish.yml'
+  workflow_dispatch:
+    inputs:
+      image:
+        description: Image directory to build (it publishes only when run on master)
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: publish-${{ github.ref }}
+  # A publish must run to completion; only pull-request runs may be superseded.
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  plan:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      images: ${{ steps.find.outputs.images }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Find the images to build
+        id: find
+        env:
+          EVENT: ${{ github.event_name }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          BEFORE_SHA: ${{ github.event.before }}
+          INPUT_IMAGE: ${{ inputs.image }}
+        run: |
+          set -euo pipefail
+          all() { for t in */TAG; do [ -f "$t" ] && echo "${t%/TAG}"; done; }
+
+          if [ "$EVENT" = workflow_dispatch ]; then
+            dirs=$INPUT_IMAGE
+          else
+            if [ "$EVENT" = pull_request ]; then
+              range="$BASE_SHA...HEAD"
+            elif [ -n "${BEFORE_SHA//0/}" ]; then
+              range="$BEFORE_SHA..HEAD"
+            else
+              range=""   # a new branch: consider every image
+            fi
+            if [ -z "$range" ]; then
+              dirs=$(all)
+            else
+              changed=$(git diff --name-only "$range")
+              if grep -qx '.github/workflows/publish.yml' <<<"$changed"; then
+                dirs=$(all)   # the workflow itself changed: test every image that opts in
+              else
+                dirs=$(awk -F/ 'NF > 1 && $1 != ".github" {print $1}' <<<"$changed" | sort -u)
+              fi
+            fi
+          fi
+
+          images='[]'
+          for d in $dirs; do
+            [[ $d =~ ^[a-z0-9][a-z0-9-]*$ ]] || { echo "::error::bad image directory name: $d"; exit 1; }
+            if [ ! -f "$d/TAG" ]; then
+              [ "$EVENT" != workflow_dispatch ] || { echo "::error::$d has no TAG file, so it does not publish from CI"; exit 1; }
+              continue
+            fi
+            [ -f "$d/Dockerfile" ] || { echo "::error::$d has a TAG file but no Dockerfile"; exit 1; }
+            [ -x "$d/smoke-test.sh" ] || { echo "::error::$d needs an executable smoke-test.sh"; exit 1; }
+            tag=$(<"$d/TAG")   # exactly the file's content (trailing newlines go): never "repaired"
+            [[ $tag =~ ^[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}$ ]] || { echo "::error::$d/TAG is not a valid tag"; exit 1; }
+            [ "$tag" != latest ] || { echo "::error::$d/TAG must not be latest: tags are never overwritten"; exit 1; }
+            platforms=linux/amd64
+            [ ! -f "$d/PLATFORMS" ] || platforms=$(<"$d/PLATFORMS")
+            [[ $platforms =~ ^linux/(amd64|arm64)(,linux/(amd64|arm64))*$ ]] || { echo "::error::$d/PLATFORMS is not valid"; exit 1; }
+            images=$(jq -c --arg n "$d" --arg t "$tag" --arg p "$platforms" '. + [{name: $n, tag: $t, platforms: $p}]' <<<"$images")
+          done
+          echo "images=$images" >> "$GITHUB_OUTPUT"
+          echo "Images to build: $images"
+
+  build:
+    needs: plan
+    if: needs.plan.outputs.images != '[]'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        image: ${{ fromJSON(needs.plan.outputs.images) }}
+    env:
+      NAME: ${{ matrix.image.name }}
+      TAG: ${{ matrix.image.tag }}
+      IMAGE: 410labs/${{ matrix.image.name }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+
+      - name: Build (linux/amd64, loaded for the smoke test)
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: ${{ matrix.image.name }}
+          load: true
+          platforms: linux/amd64
+          build-args: VERSION=${{ matrix.image.tag }}
+          tags: 410labs/${{ matrix.image.name }}:${{ matrix.image.tag }}
+
+      - name: Smoke test
+        run: ./"$NAME"/smoke-test.sh "$IMAGE:$TAG" "$TAG"
+
+  publish:
+    needs: [plan, build]
+    if: >-
+      github.event_name != 'pull_request' &&
+      github.ref == 'refs/heads/master' &&
+      needs.plan.outputs.images != '[]'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    environment: publish
+    strategy:
+      fail-fast: false
+      matrix:
+        image: ${{ fromJSON(needs.plan.outputs.images) }}
+    env:
+      NAME: ${{ matrix.image.name }}
+      TAG: ${{ matrix.image.tag }}
+      IMAGE: 410labs/${{ matrix.image.name }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+
+      - name: Is this tag already published?
+        id: exists
+        run: |
+          set -euo pipefail
+          # The repository must already exist and be public: a first push could create it
+          # private, and the registry answers "not found" for a missing repository too. An
+          # anonymous request sees only public repositories, so a 404 covers private ones.
+          code=$(curl -sS -o repo.json -w '%{http_code}' "https://hub.docker.com/v2/repositories/$IMAGE/")
+          if [ "$code" != 200 ] || ! jq -e '.is_private == false' repo.json >/dev/null; then
+            echo "::error::$IMAGE is not a public Docker Hub repository (HTTP $code). Create it first as a public repository."
+            exit 1
+          fi
+          # A missing tag says "not found"; any other failure (a registry error) stops the run
+          # instead of risking an overwrite.
+          if out=$(docker buildx imagetools inspect "$IMAGE:$TAG" 2>&1); then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+            echo "::warning::$IMAGE:$TAG is already published; not pushing. Bump $NAME/TAG to publish new content."
+            echo "### $IMAGE:$TAG" >> "$GITHUB_STEP_SUMMARY"
+            echo "Already published; skipped." >> "$GITHUB_STEP_SUMMARY"
+          elif grep -qi 'not found' <<<"$out"; then
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "$out" >&2
+            exit 1
+          fi
+
+      - if: steps.exists.outputs.exists == 'false'
+        uses: docker/login-action@81c6f93d4bc991e510b342a00b419b3bb4efc5c6 # v4.7.0
+        with:
+          username: ${{ vars.DOCKER_USERNAME }}
+          password: ${{ secrets.DOCKER_PASSWORD }}
+
+      - name: Push
+        id: push
+        if: steps.exists.outputs.exists == 'false'
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: ${{ matrix.image.name }}
+          push: true
+          platforms: ${{ matrix.image.platforms }}
+          build-args: VERSION=${{ matrix.image.tag }}
+          tags: 410labs/${{ matrix.image.name }}:${{ matrix.image.tag }}
+
+      - name: Smoke test the image as published, by digest
+        if: steps.exists.outputs.exists == 'false'
+        env:
+          DIGEST: ${{ steps.push.outputs.digest }}
+        run: |
+          set -euo pipefail
+          [[ $DIGEST =~ ^sha256:[0-9a-f]{64}$ ]]
+          docker pull --platform linux/amd64 "$IMAGE@$DIGEST"
+          ./"$NAME"/smoke-test.sh "$IMAGE@$DIGEST" "$TAG"
+
+      - name: Summary
+        if: steps.exists.outputs.exists == 'false'
+        env:
+          DIGEST: ${{ steps.push.outputs.digest }}
+          PLATFORMS: ${{ matrix.image.platforms }}
+        run: |
+          {
+            echo "### $IMAGE:$TAG"
+            echo
+            echo "- Commit: \`$GITHUB_SHA\`"
+            echo "- Platforms: \`$PLATFORMS\`"
+            echo "- Pin as: \`$IMAGE:$TAG@$DIGEST\`"
+          } >> "$GITHUB_STEP_SUMMARY"
