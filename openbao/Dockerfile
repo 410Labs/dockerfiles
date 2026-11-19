@@ -23,7 +23,16 @@
 #   bao plugin register -sha256=<binary sha256> -version=<v> -command=secret-aws-<v> secret aws
 #   bao secrets enable -plugin-version=<v> aws
 #
-# To bump a plugin or OpenBao:
+# The IAM Roles Anywhere credential helper (aws_signing_helper) is baked so the awskms seal can
+# get short-lived AWS credentials from an X.509 certificate instead of a static access key
+# (410Labs/infrastructure#445). The seal plugin uses AWS SDK v2's default config, which runs a
+# `credential_process` named in AWS_CONFIG_FILE's [default] profile:
+#   credential_process = /usr/local/bin/aws_signing_helper credential-process --certificate ...
+# AWS publishes it as a glibc binary; the base image's gcompat runs it (TLS, DNS and signing were
+# proven in the infrastructure#444 trial). The pinned sha256 is the one the trial downloaded and
+# ran. AWS's official helper image is not used: it has no shell to copy from.
+#
+# To bump a plugin, the helper or OpenBao:
 #  1. Change the ARGs below. Base digest from `docker buildx imagetools inspect
 #     ghcr.io/openbao/openbao:<version>`. Checksums from the plugin release's
 #     checksums-<plugin>.txt, but first verify the release tarball's .sig against OpenBao's GPG
@@ -71,12 +80,23 @@ RUN apk add --no-cache curl \
  && install -m 0755 /tmp/openbao-plugin-secrets-aws_linux_amd64_v1 "/out/secret-aws-${SECRETS_AWS_VERSION}" \
  && echo "${SECRETS_AWS_BINARY_SHA256}  /out/secret-aws-${SECRETS_AWS_VERSION}" | sha256sum -c -
 
+ARG SIGNING_HELPER_VERSION=1.8.6
+# aws_signing_helper for Linux x86_64 (Amazon Linux 2023 build).
+ARG SIGNING_HELPER_SHA256=3553fdc515e5682541a9ebdd37031ec7f461169aa13ccbb6fbd5b7259644113d
+RUN mkdir -p /bin-out \
+ && curl -fsSLo /bin-out/aws_signing_helper \
+      "https://rolesanywhere.amazonaws.com/releases/${SIGNING_HELPER_VERSION}/X86_64/Linux/Amzn2023/aws_signing_helper" \
+ && echo "${SIGNING_HELPER_SHA256}  /bin-out/aws_signing_helper" | sha256sum -c - \
+ && chmod 0755 /bin-out/aws_signing_helper
+
 FROM ${OPENBAO_IMAGE}
 # CI passes the tag (the contents of ./TAG) as VERSION.
 ARG VERSION
 LABEL org.opencontainers.image.title="openbao" \
-      org.opencontainers.image.description="OpenBao with the AWS KMS seal and AWS secrets engine plugins baked in" \
+      org.opencontainers.image.description="OpenBao with the AWS KMS seal and AWS secrets engine plugins and the IAM Roles Anywhere credential helper baked in" \
       org.opencontainers.image.source="https://github.com/410Labs/dockerfiles" \
       org.opencontainers.image.version="${VERSION}"
 # The directory stays writable by openbao, so the download fallback still works.
 COPY --from=plugin --chown=openbao:openbao /out/ /openbao/plugins/
+# Owned by root and not writable by openbao: the seal trusts whatever this binary returns.
+COPY --from=plugin --chown=root:root /bin-out/aws_signing_helper /usr/local/bin/aws_signing_helper
