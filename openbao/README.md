@@ -11,7 +11,8 @@ download them, and one helper:
 
 `410labs/openbao:<tag>` on Docker Hub: public, `linux/amd64`. The tag starts with the OpenBao version and
 names what is baked in: `2.7.2-kms-aws-v0.1.1-secrets-aws-v0.3.2` (both plugins), then
-`2.7.2-aws-kms-sec-ira` (the same plugins plus the Roles Anywhere helper); the exact versions are in the
+`2.7.2-aws-kms-sec-ira` (the same plugins plus the Roles Anywhere helper), then `2.7.3-aws-kms-sec-ira` (OpenBao
+2.7.3, the 2026-11-19 security release; plugins and helper unchanged); the exact versions are in the
 `Dockerfile` ARGs. Tags are never overwritten and there is no `latest`: pin
 `<tag>@<digest>` (the digest is in the publish run's summary).
 
